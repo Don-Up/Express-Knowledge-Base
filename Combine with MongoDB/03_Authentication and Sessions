@@ -1,0 +1,365 @@
+# Authentication and Sessions
+
+## Storing User Data in MongoDB
+### 1. Managing User Authentication
+
+**Manage user authentication** by storing user data in MongoDB and handling sessions.
+
+**Example: User Authentication**
+
+1. **Define Schema and Model**:
+
+   ```javascript
+   // models/User.js
+   const mongoose = require('mongoose');
+   const bcrypt = require('bcrypt');
+
+   const userSchema = new mongoose.Schema({
+     username: { type: String, required: true, unique: true },
+     password: { type: String, required: true },
+   });
+
+   // Hash password before saving
+   userSchema.pre('save', async function(next) {
+     if (!this.isModified('password')) return next();
+     this.password = await bcrypt.hash(this.password, 10);
+     next();
+   });
+
+   userSchema.methods.comparePassword = function(candidatePassword) {
+     return bcrypt.compare(candidatePassword, this.password);
+   };
+
+   const User = mongoose.model('User', userSchema);
+   module.exports = User;
+   ```
+
+2. **Set Up Authentication Routes**:
+
+   ```javascript
+   // server.js
+   const express = require('express');
+   const session = require('express-session');
+   const mongoose = require('mongoose');
+   const User = require('./models/User');
+   
+   const app = express();
+   app.use(express.json());
+   
+   // Session configuration
+   app.use(session({
+     secret: 'your_secret_key',
+     resave: false,
+     saveUninitialized: true,
+   }));
+   
+   const mongoURI = 'mongodb://localhost:27017/mydatabase';
+   mongoose.connect(mongoURI, {
+     useNewUrlParser: true,
+     useUnifiedTopology: true,
+   });
+   
+   // Register
+   app.post('/register', async (req, res) => {
+     try {
+       const { username, password } = req.body;
+       const user = new User({ username, password });
+       await user.save();
+       res.status(201).send('User registered');
+     } catch (error) {
+       res.status(400).send('Error registering user');
+     }
+   });
+   
+   // Login
+   app.post('/login', async (req, res) => {
+     try {
+       const { username, password } = req.body;
+       const user = await User.findOne({ username });
+       if (!user || !(await user.comparePassword(password))) {
+         return res.status(401).send('Invalid credentials');
+       }
+       req.session.userId = user._id;
+       res.send('Logged in');
+     } catch (error) {
+       res.status(500).send('Error logging in');
+     }
+   });
+   
+   // Logout
+   app.post('/logout', (req, res) => {
+     req.session.destroy(() => {
+       res.send('Logged out');
+     });
+   });
+   
+   // Protected route
+   app.get('/profile', (req, res) => {
+     if (!req.session.userId) return res.status(401).send('Not authenticated');
+     res.send('User profile');
+   });
+   
+   app.listen(3000, () => {
+     console.log('Server running on port 3000');
+   });
+   ```
+
+- **Manage Authentication**: Use `bcrypt` for password hashing, store user credentials securely, and handle sessions with `express-session`.
+
+### 2. Storing Sessions and Tokens
+
+**Implement user authentication** with MongoDB, using sessions and tokens for state management.
+
+**Example: Storing Sessions and Tokens**
+
+1. **Set Up Session and Token Handling**:
+
+   ```javascript
+   // server.js
+   const express = require('express');
+   const session = require('express-session');
+   const mongoose = require('mongoose');
+   const User = require('./models/User');
+   const jwt = require('jsonwebtoken');
+   const app = express();
+   
+   app.use(express.json());
+   
+   // Session setup
+   app.use(session({
+     secret: 'your_secret_key',
+     resave: false,
+     saveUninitialized: false,
+   }));
+   
+   // MongoDB connection
+   mongoose.connect('mongodb://localhost:27017/mydatabase', {
+     useNewUrlParser: true,
+     useUnifiedTopology: true,
+   });
+   
+   // Register
+   app.post('/register', async (req, res) => {
+     try {
+       const { username, password } = req.body;
+       const user = new User({ username, password });
+       await user.save();
+       res.status(201).send('User registered');
+     } catch (error) {
+       res.status(400).send('Error registering user');
+     }
+   });
+   
+   // Login with token
+   app.post('/login', async (req, res) => {
+     try {
+       const { username, password } = req.body;
+       const user = await User.findOne({ username });
+       if (!user || !(await user.comparePassword(password))) {
+         return res.status(401).send('Invalid credentials');
+       }
+       const token = jwt.sign({ userId: user._id }, 'your_jwt_secret');
+       res.json({ token });
+     } catch (error) {
+       res.status(500).send('Error logging in');
+     }
+   });
+   
+   // Middleware to verify token
+   const authenticateToken = (req, res, next) => {
+     const token = req.headers['authorization'];
+     if (!token) return res.status(401).send('No token provided');
+     jwt.verify(token, 'your_jwt_secret', (err, user) => {
+       if (err) return res.status(403).send('Invalid token');
+       req.user = user;
+       next();
+     });
+   };
+   
+   // Protected route
+   app.get('/profile', authenticateToken, (req, res) => {
+     res.send('User profile');
+   });
+   
+   app.listen(3000, () => {
+     console.log('Server running on port 3000');
+   });
+   ```
+
+- **Manage Sessions and Tokens**: Use `express-session` for sessions and `jsonwebtoken` for creating and verifying tokens. Store sensitive information securely and validate tokens for protected routes.
+
+
+
+## Using MongoDB for Role-Based Access
+### 1. Managing User Roles
+
+**Implement role-based access control** with MongoDB to manage user roles and permissions.
+
+**Example: Managing User Roles**
+
+1. **Define User Schema with Roles**:
+
+   ```javascript
+   // models/User.js
+   const mongoose = require('mongoose');
+   const bcrypt = require('bcrypt');
+
+   const userSchema = new mongoose.Schema({
+     username: { type: String, required: true, unique: true },
+     password: { type: String, required: true },
+     role: { type: String, enum: ['user', 'admin'], default: 'user' }, // Define roles
+   });
+
+   // Hash password before saving
+   userSchema.pre('save', async function(next) {
+     if (!this.isModified('password')) return next();
+     this.password = await bcrypt.hash(this.password, 10);
+     next();
+   });
+
+   userSchema.methods.comparePassword = function(candidatePassword) {
+     return bcrypt.compare(candidatePassword, this.password);
+   };
+
+   const User = mongoose.model('User', userSchema);
+   module.exports = User;
+   ```
+
+2. **Set Up Role-Based Middleware**:
+
+   ```javascript
+   // server.js
+   const express = require('express');
+   const session = require('express-session');
+   const mongoose = require('mongoose');
+   const User = require('./models/User');
+   const jwt = require('jsonwebtoken');
+   const app = express();
+   
+   app.use(express.json());
+   app.use(session({
+     secret: 'your_secret_key',
+     resave: false,
+     saveUninitialized: false,
+   }));
+   
+   // MongoDB connection
+   mongoose.connect('mongodb://localhost:27017/mydatabase', {
+     useNewUrlParser: true,
+     useUnifiedTopology: true,
+   });
+   
+   // Register
+   app.post('/register', async (req, res) => {
+     try {
+       const { username, password, role } = req.body;
+       const user = new User({ username, password, role });
+       await user.save();
+       res.status(201).send('User registered');
+     } catch (error) {
+       res.status(400).send('Error registering user');
+     }
+   });
+   
+   // Login
+   app.post('/login', async (req, res) => {
+     try {
+       const { username, password } = req.body;
+       const user = await User.findOne({ username });
+       if (!user || !(await user.comparePassword(password))) {
+         return res.status(401).send('Invalid credentials');
+       }
+       const token = jwt.sign({ userId: user._id, role: user.role }, 'your_jwt_secret');
+       res.json({ token });
+     } catch (error) {
+       res.status(500).send('Error logging in');
+     }
+   });
+   
+   // Role-based access middleware
+   const authorizeRole = (roles) => (req, res, next) => {
+     const token = req.headers['authorization'];
+     if (!token) return res.status(401).send('No token provided');
+     jwt.verify(token, 'your_jwt_secret', (err, user) => {
+       if (err) return res.status(403).send('Invalid token');
+       if (!roles.includes(user.role)) return res.status(403).send('Access denied');
+       req.user = user;
+       next();
+     });
+   };
+   
+   // Protected route
+   app.get('/admin', authorizeRole(['admin']), (req, res) => {
+     res.send('Admin access');
+   });
+   
+   app.listen(3000, () => {
+     console.log('Server running on port 3000');
+   });
+   ```
+
+- **Manage Roles**: Use a `role` field in the MongoDB user schema and implement middleware to check user roles for access control.
+
+### 2. Implementing Role Checks in Routes
+
+**Implement role checks** in routes using user roles stored in MongoDB.
+
+**Example: Role-Based Route Checks**
+
+1. **Define Middleware for Role Checking**:
+
+   ```javascript
+   // middlewares/roleCheck.js
+   const jwt = require('jsonwebtoken');
+
+   const checkRole = (allowedRoles) => (req, res, next) => {
+     const token = req.headers['authorization'];
+     if (!token) return res.status(401).send('No token provided');
+
+     jwt.verify(token, 'your_jwt_secret', (err, user) => {
+       if (err) return res.status(403).send('Invalid token');
+       if (!allowedRoles.includes(user.role)) return res.status(403).send('Access denied');
+       req.user = user;
+       next();
+     });
+   };
+
+   module.exports = checkRole;
+   ```
+
+2. **Apply Middleware in Routes**:
+
+   ```javascript
+   // server.js
+   const express = require('express');
+   const mongoose = require('mongoose');
+   const User = require('./models/User');
+   const checkRole = require('./middlewares/roleCheck');
+   const jwt = require('jsonwebtoken');
+   const app = express();
+   
+   app.use(express.json());
+   
+   // MongoDB connection
+   mongoose.connect('mongodb://localhost:27017/mydatabase', {
+     useNewUrlParser: true,
+     useUnifiedTopology: true,
+   });
+   
+   // Route for admin access
+   app.get('/admin', checkRole(['admin']), (req, res) => {
+     res.send('Admin access granted');
+   });
+   
+   // Route for user access
+   app.get('/user', checkRole(['user', 'admin']), (req, res) => {
+     res.send('User access granted');
+   });
+   
+   // Start server
+   app.listen(3000, () => {
+     console.log('Server running on port 3000');
+   });
+   ```
+
+- **Role-Based Access**: Use middleware to check if a user's role allows access to specific routes, ensuring proper authorization based on user roles.
